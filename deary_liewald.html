@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Deary-Liewald Reaction Time Task</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    #container {
+      text-align: center;
+      max-width: 900px;
+      padding: 20px;
+    }
+    #canvas {
+      border: 2px solid #333;
+      background: white;
+      margin: 20px auto;
+    }
+    input[type="text"] {
+      font-size: 24px;
+      padding: 10px;
+      width: 120px;
+      text-align: center;
+      margin: 10px;
+    }
+    button {
+      font-size: 18px;
+      padding: 12px 24px;
+      margin: 10px;
+      cursor: pointer;
+    }
+    #instructions {
+      font-size: 16px;
+      margin: 20px 0;
+      line-height: 1.4;
+    }
+    #results {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    table {
+      margin: 20px auto;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid #ddd;
+      padding: 8px;
+      text-align: center;
+    }
+    th {
+      background: #eee;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <canvas id="canvas" width="900" height="400"></canvas>
+    
+    <div id="participant-section" style="display: block;">
+      <h1>Deary-Liewald Task</h1>
+      <p>Enter your 3-digit participant number:</p>
+      <input type="text" id="participant-id" maxlength="3" placeholder="001">
+      <br>
+      <button onclick="startExperiment()">Start Experiment</button>
+    </div>
+
+    <div id="instructions"></div>
+    
+    <div id="controls" style="display: none;">
+      <button id="next-btn" onclick="nextBlock()">Next Block</button>
+    </div>
+
+    <div id="results" style="display: none;">
+      <h2>Your Performance</h2>
+      <div id="summary"></div>
+      <button onclick="downloadCSV()">Download CSV Data</button>
+      <button onclick="restartExperiment()">Restart Experiment</button>
+    </div>
+  </div>
+
+  <script>
+    // ==== Setup ====
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
+
+    // Experiment parameters (matching PsychoPy)
+    const MAX_RESPONSE_TIME = 3000;  // ms
+    const MIN_INTERVAL = 1000;       // ms
+    const MAX_INTERVAL = 3000;       // ms
+
+    // State
+    let participantID = '';
+    let currentBlock = '';
+    let trialIndex = 0;
+    let trials = [];  // All trial data
+    let waitingForResponse = false;
+    let startTime = 0;
+    let timeoutTimer = null;
+    let targetPosition = null;
+    let correctPosition = null;
+
+    // Block definitions
+    const BLOCKS = [
+      { name: 'dlsimple_training', training: 1, type: 'simple', trials: 8 },
+      { name: 'dlsimple_real', training: 0, type: 'simple', trials: 20 },
+      { name: 'dlchoice_training', training: 1, type: 'choice', trials: 8 },
+      { name: 'dlchoice_real', training: 0, type: 'choice', trials: 40 }
+    ];
+
+    // Choice positions (matching dl_choice table)
+    const CHOICE_POSITIONS = [
+      { x: -150, key: 'z', index: 1 },
+      { x: -50,  key: 'x', index: 2 },
+      { x: 50,   key: ',', index: 3 },
+      { x: 150,  key: '.', index: 4 }
+    ];
+
+    // Instructions (simplified from bitmaps)
+    const INSTRUCTIONS = {
+      simple: [
+        "Simple Task Instructions:",
+        "Press SPACE when the cross appears in the center box.",
+        "Press Next Block when ready."
+      ].join('\n'),
+      choice: [
+        "Choice Task Instructions:",
+        "Four boxes will appear. A cross will appear in one box.",
+        "Press: Z (leftmost), X (left), COMMA (right), PERIOD (rightmost)",
+        "Press Next Block when ready."
+      ].join('\n')
+    };
+
+    // ==== Drawing ====
+    function clearCanvas() {
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    }
+
+    function drawBox(x, y = HEIGHT/2, filled = false) {
+      const size = 80;
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x - size/2, y - size/2, size, size);
+      
+      if (filled) {
+        ctx.fillStyle = '#ff4444';
+        ctx.font = '48px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('✕', x, y);
+      }
+    }
+
+    function drawInstructionText(text) {
+      clearCanvas();
+      ctx.fillStyle = 'black';
+      ctx.font = '24px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      const lines = text.split('\n');
+      lines.forEach((line, i) => {
+        ctx.fillText(line, WIDTH/2, HEIGHT/2 - 50 + i * 30);
+      });
+    }
+
+    function drawTrial(type) {
+      clearCanvas();
+      
+      if (type === 'simple') {
+        drawBox(WIDTH/2, HEIGHT/2, true);  // Cross in center
+      } else {
+        // Draw 4 empty boxes
+        CHOICE_POSITIONS.forEach(pos => drawBox(WIDTH/2 + pos.x, HEIGHT/2));
+        // Draw cross in target
+        const target = CHOICE_POSITIONS.find(p => p.index === targetPosition);
+        drawBox(WIDTH/2 + target.x, HEIGHT/2, true);
+      }
+    }
+
+    function drawFeedback(type) {
+      clearCanvas();
+      ctx.fillStyle = 'black';
+      ctx.font = '36px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      if (type === 'wrong') {
+        ctx.fillText('Wrong Key!', WIDTH/2, HEIGHT/2 - 50);
+        ctx.font = '24px Arial';
+        ctx.fillText('Reminder: Z=1st, X=2nd, ,=3rd, .=4th', WIDTH/2, HEIGHT/2 + 50);
+      } else if (type === 'slow') {
+        ctx.fillText('Too Slow!', WIDTH/2, HEIGHT/2);
+      }
+    }
+
+    // ==== Experiment logic ====
+    function validateParticipantID(id) {
+      return /^\d{3}$/.test(id);
+    }
+
+    function startExperiment() {
+      const idInput = document.getElementById('participant-id');
+      participantID = idInput.value.trim();
+      
+      if (!validateParticipantID(participantID)) {
+        alert('Please enter a valid 3-digit number (e.g., 001)');
+        return;
+      }
+
+      document.getElementById('participant-section').style.display = 'none';
+      document.getElementById('controls').style.display = 'block';
+      nextBlock();
+    }
+
+    function nextBlock() {
+      const block = BLOCKS.find(b => currentBlock === '' || currentBlock === b.name);
+      
+      if (!block) {
+        // Finished all blocks
+        showResults();
+        return;
+      }
+
+      currentBlock = block.name;
+      trialIndex = 0;
+      
+      document.getElementById('instructions').innerHTML = 
+        `<div>${INSTRUCTIONS[block.type]}</div>`;
+
+      startTrial(block);
+    }
+
+    function startTrial(block) {
+      if (trialIndex >= block.trials) {
+        // Block complete, next block
+        setTimeout(() => nextBlock(), 1000);
+        return;
+      }
+
+      // Random foreperiod
+      const foreperiod = MIN_INTERVAL + Math.random() * (MAX_INTERVAL - MIN_INTERVAL);
+      
+      // Fixation (empty boxes for choice, nothing for simple)
+      clearCanvas();
+      if (block.type === 'choice') {
+        CHOICE_POSITIONS.forEach(pos => drawBox(WIDTH/2 + pos.x, HEIGHT/2));
+      }
+      
+      setTimeout(() => {
+        if (block.type === 'simple') {
+          targetPosition = 1;  // Center
+          drawTrial('simple');
+        } else {
+          targetPosition = Math.floor(Math.random() * 4) + 1;  // 1-4
+          correctPosition = targetPosition;
+          drawTrial('choice');
+        }
+        
+        startTime = performance.now();
+        waitingForResponse = true;
+        
+        // Timeout
+        timeoutTimer = setTimeout(() => {
+          recordTrial(block, 'timeout');
+        }, MAX_RESPONSE_TIME);
+      }, foreperiod);
+    }
+
+    function handleKeyPress(e) {
+      if (!waitingForResponse) return;
+
+      let status = 'error';
+      let rt = performance.now() - startTime;
+
+      if (currentBlock.includes('simple')) {
+        if (e.key === ' ') {
+          status = 'correct';
+        }
+      } else {
+        const pressedPos = CHOICE_POSITIONS.find(p => e.key === p.key);
+        if (pressedPos && pressedPos.index === correctPosition) {
+          status = 'correct';
+        }
+      }
+
+      if (status !== 'error') {
+        clearTimeout(timeoutTimer);
+        recordTrial(BLOCKS.find(b => b.name === currentBlock), status, rt);
+      }
+    }
+
+    function recordTrial(block, status, rt = null) {
+      waitingForResponse = false;
+      clearTimeout(timeoutTimer);
+
+      const statusCode = { correct: 1, error: 2, timeout: 3 }[status];
+      const data = {
+        participant_id: participantID,
+        block: block.name,
+        training: block.training,
+        num_choices: block.type === 'simple' ? 1 : 4,
+        foreperiod: Math.round(block.foreperiod || 0),
+        target_pos: targetPosition,
+        rt: rt ? Math.round(rt) : null,
+        status: statusCode
+      };
+      trials.push(data);
+
+      // Feedback only in training
+      if (block.training) {
+        setTimeout(() => {
+          if (status === 'timeout') {
+            drawFeedback('slow');
+          } else if (status === 'error') {
+            drawFeedback('wrong');
+          }
+          
+          setTimeout(() => {
+            trialIndex++;
+            startTrial(block);
+          }, status === 'error' ? 2700 : 700);  // reminder delay
+        }, 0);
+      } else {
+        trialIndex++;
+        setTimeout(() => startTrial(block), 1000);
+      }
+    }
+
+    function showResults() {
+      document.getElementById('controls').style.display = 'none';
+      document.getElementById('results').style.display = 'block';
+
+      // Compute means (training excluded, correct only)
+      const realCorrectSimple = trials.filter(t => 
+        t.training === 0 && t.num_choices === 1 && t.status === 1
+      );
+      const realCorrectChoice = trials.filter(t => 
+        t.training === 0 && t.num_choices === 4 && t.status === 1
+      );
+
+      const simpleRT = realCorrectSimple.length > 0 
+        ? realCorrectSimple.reduce((sum, t) => sum + t.rt, 0) / realCorrectSimple.length 
+        : 0;
+      const choiceRT = realCorrectChoice.length > 0 
+        ? realCorrectChoice.reduce((sum, t) => sum + t.rt, 0) / realCorrectChoice.length 
+        : 0;
+
+      document.getElementById('summary').innerHTML = `
+        <p><strong>Participant ID:</strong> ${participantID}</p>
+        <p>Your response speed in correct trials (training excluded):</p>
+        <p><strong>Simple task:</strong> ${simpleRT.toFixed(0)} ms</p>
+        <p><strong>Choice task:</strong> ${choiceRT.toFixed(0)} ms</p>
+        <p>Write down these numbers, then download your data.</p>
+      `;
+    }
+
+    function downloadCSV() {
+      const headers = ['participant_id', 'block', 'training', 'num_choices', 'foreperiod', 'target_pos', 'rt', 'status'];
+      const csvContent = [
+        headers.join(','),
+        ...trials.map(t => headers.map(h => t[h] || '').join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `deary_liewald_${participantID}_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function restartExperiment() {
+      trials = [];
+      currentBlock = '';
+      document.getElementById('results').style.display = 'none';
+      document.getElementById('participant-section').style.display = 'block';
+      document.getElementById('participant-id').value = participantID;
+      document.getElementById('participant-id').focus();
+    }
+
+    // ==== Event listeners ====
+    document.addEventListener('keydown', handleKeyPress);
+    document.getElementById('participant-id').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') startExperiment();
+    });
+
+    // Initial focus
+    document.getElementById('participant-id').focus();
+  </script>
+</body>
+</html>
