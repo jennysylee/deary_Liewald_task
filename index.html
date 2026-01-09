@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <title>Deary-Liewald Reaction Time Task</title>
   <style>
+    /* Same styles as before */
     body {
       margin: 0;
       font-family: Arial, sans-serif;
@@ -64,6 +65,7 @@
   </style>
 </head>
 <body>
+  <!-- Same HTML structure as before -->
   <div id="container">
     <canvas id="canvas" width="900" height="400"></canvas>
     
@@ -90,29 +92,31 @@
   </div>
 
   <script>
-    // ==== Setup ====
+    // ==== Setup (same as before) ====
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const WIDTH = canvas.width;
     const HEIGHT = canvas.height;
 
-    // Experiment parameters (matching PsychoPy)
-    const MAX_RESPONSE_TIME = 3000;  // ms
-    const MIN_INTERVAL = 1000;       // ms
-    const MAX_INTERVAL = 3000;       // ms
+    // Experiment parameters
+    const MAX_RESPONSE_TIME = 3000;
+    const MIN_INTERVAL = 1000;
+    const MAX_INTERVAL = 3000;
 
     // State
     let participantID = '';
     let currentBlock = '';
     let trialIndex = 0;
-    let trials = [];  // All trial data
+    let trials = [];
     let waitingForResponse = false;
     let startTime = 0;
     let timeoutTimer = null;
     let targetPosition = null;
     let correctPosition = null;
+    let currentBlockObj = null;
+    let foreperiod = 0;  // Fixed bug: store foreperiod
 
-    // Block definitions
+    // Block definitions (same)
     const BLOCKS = [
       { name: 'dlsimple_training', training: 1, type: 'simple', trials: 8 },
       { name: 'dlsimple_real', training: 0, type: 'simple', trials: 20 },
@@ -120,7 +124,6 @@
       { name: 'dlchoice_real', training: 0, type: 'choice', trials: 40 }
     ];
 
-    // Choice positions (matching dl_choice table)
     const CHOICE_POSITIONS = [
       { x: -150, key: 'z', index: 1 },
       { x: -50,  key: 'x', index: 2 },
@@ -128,22 +131,12 @@
       { x: 150,  key: '.', index: 4 }
     ];
 
-    // Instructions (simplified from bitmaps)
     const INSTRUCTIONS = {
-      simple: [
-        "Simple Task Instructions:",
-        "Press SPACE when the cross appears in the center box.",
-        "Press Next Block when ready."
-      ].join('\n'),
-      choice: [
-        "Choice Task Instructions:",
-        "Four boxes will appear. A cross will appear in one box.",
-        "Press: Z (leftmost), X (left), COMMA (right), PERIOD (rightmost)",
-        "Press Next Block when ready."
-      ].join('\n')
+      simple: "Simple Task Instructions:\nPress SPACE when the cross appears in the center box.\nPress Next Block when ready.",
+      choice: "Choice Task Instructions:\nFour boxes will appear. A cross will appear in one box.\nPress: Z (1st), X (2nd), COMMA (3rd), PERIOD (4th)\nPress Next Block when ready."
     };
 
-    // ==== Drawing ====
+    // Drawing functions (same as before)
     function clearCanvas() {
       ctx.fillStyle = 'white';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -181,11 +174,9 @@
       clearCanvas();
       
       if (type === 'simple') {
-        drawBox(WIDTH/2, HEIGHT/2, true);  // Cross in center
+        drawBox(WIDTH/2, HEIGHT/2, true);
       } else {
-        // Draw 4 empty boxes
         CHOICE_POSITIONS.forEach(pos => drawBox(WIDTH/2 + pos.x, HEIGHT/2));
-        // Draw cross in target
         const target = CHOICE_POSITIONS.find(p => p.index === targetPosition);
         drawBox(WIDTH/2 + target.x, HEIGHT/2, true);
       }
@@ -200,14 +191,43 @@
       
       if (type === 'wrong') {
         ctx.fillText('Wrong Key!', WIDTH/2, HEIGHT/2 - 50);
-        ctx.font = '24px Arial';
+        ctx.font = '20px Arial';
         ctx.fillText('Reminder: Z=1st, X=2nd, ,=3rd, .=4th', WIDTH/2, HEIGHT/2 + 50);
       } else if (type === 'slow') {
         ctx.fillText('Too Slow!', WIDTH/2, HEIGHT/2);
       }
     }
 
-    // ==== Experiment logic ====
+    // FIXED: Key handler with preventDefault for spacebar
+    document.addEventListener('keydown', function(e) {
+      // Prevent spacebar scrolling
+      if (e.code === 'Space') {
+        e.preventDefault();
+      }
+
+      if (!waitingForResponse) return;
+
+      let status = 'error';
+      let rt = performance.now() - startTime;
+
+      if (currentBlockObj.type === 'simple') {
+        if (e.code === 'Space' || e.key === ' ') {  // Both code and key
+          status = 'correct';
+        }
+      } else {
+        const pressedPos = CHOICE_POSITIONS.find(p => e.key === p.key);
+        if (pressedPos && pressedPos.index === correctPosition) {
+          status = 'correct';
+        }
+      }
+
+      if (status !== 'error') {
+        clearTimeout(timeoutTimer);
+        recordTrial(status, rt);
+      }
+    });
+
+    // Rest of functions (same as before, with foreperiod fix)
     function validateParticipantID(id) {
       return /^\d{3}$/.test(id);
     }
@@ -227,45 +247,44 @@
     }
 
     function nextBlock() {
-      const block = BLOCKS.find(b => currentBlock === '' || currentBlock === b.name);
+      const blockIndex = BLOCKS.findIndex(b => b.name === currentBlock);
+      const nextBlockObj = BLOCKS[blockIndex + 1];
       
-      if (!block) {
-        // Finished all blocks
+      if (!nextBlockObj) {
         showResults();
         return;
       }
 
-      currentBlock = block.name;
+      currentBlock = nextBlockObj.name;
+      currentBlockObj = nextBlockObj;
       trialIndex = 0;
       
       document.getElementById('instructions').innerHTML = 
-        `<div>${INSTRUCTIONS[block.type]}</div>`;
+        `<div>${INSTRUCTIONS[nextBlockObj.type]}</div>`;
 
-      startTrial(block);
+      startTrial();
     }
 
-    function startTrial(block) {
-      if (trialIndex >= block.trials) {
-        // Block complete, next block
+    function startTrial() {
+      if (trialIndex >= currentBlockObj.trials) {
         setTimeout(() => nextBlock(), 1000);
         return;
       }
 
-      // Random foreperiod
-      const foreperiod = MIN_INTERVAL + Math.random() * (MAX_INTERVAL - MIN_INTERVAL);
+      // Random foreperiod (FIXED: store it)
+      foreperiod = MIN_INTERVAL + Math.random() * (MAX_INTERVAL - MIN_INTERVAL);
       
-      // Fixation (empty boxes for choice, nothing for simple)
       clearCanvas();
-      if (block.type === 'choice') {
+      if (currentBlockObj.type === 'choice') {
         CHOICE_POSITIONS.forEach(pos => drawBox(WIDTH/2 + pos.x, HEIGHT/2));
       }
       
       setTimeout(() => {
-        if (block.type === 'simple') {
-          targetPosition = 1;  // Center
+        if (currentBlockObj.type === 'simple') {
+          targetPosition = 1;
           drawTrial('simple');
         } else {
-          targetPosition = Math.floor(Math.random() * 4) + 1;  // 1-4
+          targetPosition = Math.floor(Math.random() * 4) + 1;
           correctPosition = targetPosition;
           drawTrial('choice');
         }
@@ -273,78 +292,59 @@
         startTime = performance.now();
         waitingForResponse = true;
         
-        // Timeout
         timeoutTimer = setTimeout(() => {
-          recordTrial(block, 'timeout');
+          recordTrial('timeout');
         }, MAX_RESPONSE_TIME);
       }, foreperiod);
     }
 
-    function handleKeyPress(e) {
-      if (!waitingForResponse) return;
-
-      let status = 'error';
-      let rt = performance.now() - startTime;
-
-      if (currentBlock.includes('simple')) {
-        if (e.key === ' ') {
-          status = 'correct';
-        }
-      } else {
-        const pressedPos = CHOICE_POSITIONS.find(p => e.key === p.key);
-        if (pressedPos && pressedPos.index === correctPosition) {
-          status = 'correct';
-        }
-      }
-
-      if (status !== 'error') {
-        clearTimeout(timeoutTimer);
-        recordTrial(BLOCKS.find(b => b.name === currentBlock), status, rt);
-      }
-    }
-
-    function recordTrial(block, status, rt = null) {
+    function recordTrial(status, rt = null) {
       waitingForResponse = false;
       clearTimeout(timeoutTimer);
 
       const statusCode = { correct: 1, error: 2, timeout: 3 }[status];
       const data = {
         participant_id: participantID,
-        block: block.name,
-        training: block.training,
-        num_choices: block.type === 'simple' ? 1 : 4,
-        foreperiod: Math.round(block.foreperiod || 0),
+        block: currentBlock,
+        training: currentBlockObj.training,
+        num_choices: currentBlockObj.type === 'simple' ? 1 : 4,
+        foreperiod: Math.round(foreperiod),
         target_pos: targetPosition,
         rt: rt ? Math.round(rt) : null,
         status: statusCode
       };
       trials.push(data);
 
-      // Feedback only in training
-      if (block.training) {
+      if (currentBlockObj.training) {
         setTimeout(() => {
           if (status === 'timeout') {
             drawFeedback('slow');
+            setTimeout(() => {
+              trialIndex++;
+              startTrial();
+            }, 700);
           } else if (status === 'error') {
             drawFeedback('wrong');
-          }
-          
-          setTimeout(() => {
+            setTimeout(() => {
+              trialIndex++;
+              startTrial();
+            }, 2700);
+          } else {
             trialIndex++;
-            startTrial(block);
-          }, status === 'error' ? 2700 : 700);  // reminder delay
+            startTrial();
+          }
         }, 0);
       } else {
         trialIndex++;
-        setTimeout(() => startTrial(block), 1000);
+        setTimeout(() => startTrial(), 1000);
       }
     }
 
+    // Results functions (unchanged)
     function showResults() {
       document.getElementById('controls').style.display = 'none';
       document.getElementById('results').style.display = 'block';
 
-      // Compute means (training excluded, correct only)
       const realCorrectSimple = trials.filter(t => 
         t.training === 0 && t.num_choices === 1 && t.status === 1
       );
@@ -362,24 +362,23 @@
       document.getElementById('summary').innerHTML = `
         <p><strong>Participant ID:</strong> ${participantID}</p>
         <p>Your response speed in correct trials (training excluded):</p>
-        <p><strong>Simple task:</strong> ${simpleRT.toFixed(0)} ms</p>
-        <p><strong>Choice task:</strong> ${choiceRT.toFixed(0)} ms</p>
-        <p>Write down these numbers, then download your data.</p>
+        <p><strong>Simple task:</strong> ${simpleRT.toFixed(0)} ms  (${realCorrectSimple.length} trials)</p>
+        <p><strong>Choice task:</strong> ${choiceRT.toFixed(0)} ms  (${realCorrectChoice.length} trials)</p>
       `;
     }
 
     function downloadCSV() {
-      const headers = ['participant_id', 'block', 'training', 'num_choices', 'foreperiod', 'target_pos', 'rt', 'status'];
+      const headers = ['participant_id','block','training','num_choices','foreperiod','target_pos','rt','status'];
       const csvContent = [
         headers.join(','),
-        ...trials.map(t => headers.map(h => t[h] || '').join(','))
+        ...trials.map(t => headers.map(h => `"${t[h] || ''}"`).join(','))
       ].join('\n');
 
-      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `deary_liewald_${participantID}_${new Date().toISOString().slice(0,10)}.csv`;
+      a.download = `deary_liewald_${participantID}_${Date.now()}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     }
@@ -393,15 +392,11 @@
       document.getElementById('participant-id').focus();
     }
 
-    // ==== Event listeners ====
-    document.addEventListener('keydown', handleKeyPress);
     document.getElementById('participant-id').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') startExperiment();
     });
 
-    // Initial focus
     document.getElementById('participant-id').focus();
   </script>
 </body>
 </html>
-
