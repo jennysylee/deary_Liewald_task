@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <title>Deary-Liewald Reaction Time Task</title>
   <style>
-    /* Same styles as before */
     body {
       margin: 0;
       font-family: Arial, sans-serif;
@@ -25,6 +24,12 @@
       background: white;
       margin: 20px auto;
     }
+    #trial-counter {
+      font-size: 20px;
+      font-weight: bold;
+      color: #333;
+      margin: 10px 0;
+    }
     input[type="text"] {
       font-size: 24px;
       padding: 10px;
@@ -38,6 +43,10 @@
       margin: 10px;
       cursor: pointer;
     }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     #instructions {
       font-size: 16px;
       margin: 20px 0;
@@ -49,24 +58,11 @@
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     }
-    table {
-      margin: 20px auto;
-      border-collapse: collapse;
-      font-size: 14px;
-    }
-    th, td {
-      border: 1px solid #ddd;
-      padding: 8px;
-      text-align: center;
-    }
-    th {
-      background: #eee;
-    }
   </style>
 </head>
 <body>
-  <!-- Same HTML structure as before -->
   <div id="container">
+    <div id="trial-counter" style="display: none;">Trial <span id="trial-num">1</span>/<span id="trial-total">20</span></div>
     <canvas id="canvas" width="900" height="400"></canvas>
     
     <div id="participant-section" style="display: block;">
@@ -80,7 +76,8 @@
     <div id="instructions"></div>
     
     <div id="controls" style="display: none;">
-      <button id="next-btn" onclick="nextBlock()">Next Block</button>
+      <button id="ready-btn" onclick="startRealTrials()" disabled>Ready - Start Real Trials</button>
+      <button id="next-block-btn" onclick="nextBlock()" style="display: none;">Next Block</button>
     </div>
 
     <div id="results" style="display: none;">
@@ -92,13 +89,12 @@
   </div>
 
   <script>
-    // ==== Setup (same as before) ====
+    // ==== Setup ====
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const WIDTH = canvas.width;
     const HEIGHT = canvas.height;
 
-    // Experiment parameters
     const MAX_RESPONSE_TIME = 3000;
     const MIN_INTERVAL = 1000;
     const MAX_INTERVAL = 3000;
@@ -107,22 +103,15 @@
     let participantID = '';
     let currentBlock = '';
     let trialIndex = 0;
+    let blockTrialsRemaining = 0;
     let trials = [];
     let waitingForResponse = false;
     let startTime = 0;
     let timeoutTimer = null;
     let targetPosition = null;
     let correctPosition = null;
-    let currentBlockObj = null;
-    let foreperiod = 0;  // Fixed bug: store foreperiod
-
-    // Block definitions (same)
-    const BLOCKS = [
-      { name: 'dlsimple_training', training: 1, type: 'simple', trials: 8 },
-      { name: 'dlsimple_real', training: 0, type: 'simple', trials: 20 },
-      { name: 'dlchoice_training', training: 1, type: 'choice', trials: 8 },
-      { name: 'dlchoice_real', training: 0, type: 'choice', trials: 40 }
-    ];
+    let foreperiod = 0;
+    let isPractice = false;  // NEW: practice vs real
 
     const CHOICE_POSITIONS = [
       { x: -150, key: 'z', index: 1 },
@@ -131,12 +120,24 @@
       { x: 150,  key: '.', index: 4 }
     ];
 
+    const BLOCKS = [
+      { name: 'practice_simple', type: 'simple', trials: 5, training: 1 },
+      { name: 'simple_real', type: 'simple', trials: 20, training: 0 },
+      { name: 'choice_real', type: 'choice', trials: 40, training: 0 }
+    ];
+
     const INSTRUCTIONS = {
-      simple: "Simple Task Instructions:\nPress SPACE when the cross appears in the center box.\nPress Next Block when ready.",
-      choice: "Choice Task Instructions:\nFour boxes will appear. A cross will appear in one box.\nPress: Z (1st), X (2nd), COMMA (3rd), PERIOD (4th)\nPress Next Block when ready."
+      practice: "PRACTICE TRIALS (5 total)<br>Follow instructions above. These don't count toward your score.",
+      simple: "SIMPLE TASK<br>Press SPACE when cross appears in center box.",
+      choice: "CHOICE TASK<br>Z (1st), X (2nd), COMMA (3rd), PERIOD (4th)"
     };
 
-    // Drawing functions (same as before)
+    // ==== Drawing ====
+    function updateTrialCounter() {
+      document.getElementById('trial-num').textContent = trialIndex + 1;
+      document.getElementById('trial-total').textContent = blockTrialsRemaining;
+    }
+
     function clearCanvas() {
       ctx.fillStyle = 'white';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -157,21 +158,11 @@
       }
     }
 
-    function drawInstructionText(text) {
-      clearCanvas();
-      ctx.fillStyle = 'black';
-      ctx.font = '24px Arial';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      
-      const lines = text.split('\n');
-      lines.forEach((line, i) => {
-        ctx.fillText(line, WIDTH/2, HEIGHT/2 - 50 + i * 30);
-      });
-    }
-
     function drawTrial(type) {
       clearCanvas();
+      
+      document.getElementById('trial-counter').style.display = 'block';
+      updateTrialCounter();
       
       if (type === 'simple') {
         drawBox(WIDTH/2, HEIGHT/2, true);
@@ -180,6 +171,17 @@
         const target = CHOICE_POSITIONS.find(p => p.index === targetPosition);
         drawBox(WIDTH/2 + target.x, HEIGHT/2, true);
       }
+    }
+
+    function drawReadyScreen() {
+      clearCanvas();
+      ctx.fillStyle = 'black';
+      ctx.font = '32px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Practice complete!', WIDTH/2, HEIGHT/2 - 50);
+      ctx.font = '24px Arial';
+      ctx.fillText('Ready for real test trials?', WIDTH/2, HEIGHT/2 + 50);
     }
 
     function drawFeedback(type) {
@@ -192,26 +194,23 @@
       if (type === 'wrong') {
         ctx.fillText('Wrong Key!', WIDTH/2, HEIGHT/2 - 50);
         ctx.font = '20px Arial';
-        ctx.fillText('Reminder: Z=1st, X=2nd, ,=3rd, .=4th', WIDTH/2, HEIGHT/2 + 50);
+        ctx.fillText('Z=1st, X=2nd, ,=3rd, .=4th', WIDTH/2, HEIGHT/2 + 50);
       } else if (type === 'slow') {
         ctx.fillText('Too Slow!', WIDTH/2, HEIGHT/2);
       }
     }
 
-    // FIXED: Key handler with preventDefault for spacebar
+    // FIXED key handler
     document.addEventListener('keydown', function(e) {
-      // Prevent spacebar scrolling
-      if (e.code === 'Space') {
-        e.preventDefault();
-      }
+      if (e.code === 'Space') e.preventDefault();
 
       if (!waitingForResponse) return;
 
       let status = 'error';
       let rt = performance.now() - startTime;
 
-      if (currentBlockObj.type === 'simple') {
-        if (e.code === 'Space' || e.key === ' ') {  // Both code and key
+      if (currentBlock.includes('simple')) {
+        if (e.code === 'Space' || e.key === ' ') {
           status = 'correct';
         }
       } else {
@@ -227,60 +226,42 @@
       }
     });
 
-    // Rest of functions (same as before, with foreperiod fix)
-    function validateParticipantID(id) {
-      return /^\d{3}$/.test(id);
-    }
-
+    // ==== Experiment ====
     function startExperiment() {
       const idInput = document.getElementById('participant-id');
       participantID = idInput.value.trim();
       
-      if (!validateParticipantID(participantID)) {
-        alert('Please enter a valid 3-digit number (e.g., 001)');
+      if (!/^\d{3}$/.test(participantID)) {
+        alert('Enter 3-digit number (001)');
         return;
       }
 
       document.getElementById('participant-section').style.display = 'none';
       document.getElementById('controls').style.display = 'block';
-      nextBlock();
-    }
-
-    function nextBlock() {
-      const blockIndex = BLOCKS.findIndex(b => b.name === currentBlock);
-      const nextBlockObj = BLOCKS[blockIndex + 1];
       
-      if (!nextBlockObj) {
-        showResults();
-        return;
-      }
-
-      currentBlock = nextBlockObj.name;
-      currentBlockObj = nextBlockObj;
-      trialIndex = 0;
-      
-      document.getElementById('instructions').innerHTML = 
-        `<div>${INSTRUCTIONS[nextBlockObj.type]}</div>`;
-
+      // Start with practice
+      currentBlock = 'practice_simple';
+      blockTrialsRemaining = 5;
+      isPractice = true;
+      document.getElementById('instructions').innerHTML = INSTRUCTIONS.practice;
       startTrial();
     }
 
     function startTrial() {
-      if (trialIndex >= currentBlockObj.trials) {
-        setTimeout(() => nextBlock(), 1000);
+      if (trialIndex >= blockTrialsRemaining) {
+        trialComplete();
         return;
       }
 
-      // Random foreperiod (FIXED: store it)
       foreperiod = MIN_INTERVAL + Math.random() * (MAX_INTERVAL - MIN_INTERVAL);
       
       clearCanvas();
-      if (currentBlockObj.type === 'choice') {
+      if (!currentBlock.includes('simple')) {
         CHOICE_POSITIONS.forEach(pos => drawBox(WIDTH/2 + pos.x, HEIGHT/2));
       }
       
       setTimeout(() => {
-        if (currentBlockObj.type === 'simple') {
+        if (currentBlock.includes('simple')) {
           targetPosition = 1;
           drawTrial('simple');
         } else {
@@ -291,10 +272,7 @@
         
         startTime = performance.now();
         waitingForResponse = true;
-        
-        timeoutTimer = setTimeout(() => {
-          recordTrial('timeout');
-        }, MAX_RESPONSE_TIME);
+        timeoutTimer = setTimeout(() => recordTrial('timeout'), MAX_RESPONSE_TIME);
       }, foreperiod);
     }
 
@@ -303,44 +281,84 @@
       clearTimeout(timeoutTimer);
 
       const statusCode = { correct: 1, error: 2, timeout: 3 }[status];
-      const data = {
+      trials.push({
         participant_id: participantID,
         block: currentBlock,
-        training: currentBlockObj.training,
-        num_choices: currentBlockObj.type === 'simple' ? 1 : 4,
+        training: isPractice ? 1 : 0,
+        num_choices: currentBlock.includes('simple') ? 1 : 4,
         foreperiod: Math.round(foreperiod),
         target_pos: targetPosition,
         rt: rt ? Math.round(rt) : null,
         status: statusCode
-      };
-      trials.push(data);
+      });
 
-      if (currentBlockObj.training) {
+      if (isPractice || currentBlock.includes('choice')) {
+        // Feedback for practice and choice
         setTimeout(() => {
           if (status === 'timeout') {
             drawFeedback('slow');
-            setTimeout(() => {
-              trialIndex++;
-              startTrial();
-            }, 700);
+            setTimeout(() => { trialIndex++; startTrial(); }, 1000);
           } else if (status === 'error') {
             drawFeedback('wrong');
-            setTimeout(() => {
-              trialIndex++;
-              startTrial();
-            }, 2700);
+            setTimeout(() => { trialIndex++; startTrial(); }, 2700);
           } else {
             trialIndex++;
             startTrial();
           }
-        }, 0);
+        }, 100);
       } else {
         trialIndex++;
-        setTimeout(() => startTrial(), 1000);
+        setTimeout(startTrial, 500);
       }
     }
 
-    // Results functions (unchanged)
+    function trialComplete() {
+      trialIndex = 0;
+      document.getElementById('trial-counter').style.display = 'none';
+      
+      if (currentBlock === 'practice_simple') {
+        // Practice done → ask if ready
+        document.getElementById('ready-btn').disabled = false;
+        drawReadyScreen();
+        document.getElementById('instructions').innerHTML = 
+          '<strong>Practice complete!</strong><br>Click "Ready" to start real test.';
+      } else {
+        // Move to next block
+        nextBlock();
+      }
+    }
+
+    function startRealTrials() {
+      document.getElementById('ready-btn').disabled = true;
+      document.getElementById('ready-btn').style.display = 'none';
+      document.getElementById('next-block-btn').style.display = 'inline';
+      
+      // First real block: simple
+      currentBlock = 'simple_real';
+      blockTrialsRemaining = 20;
+      isPractice = false;
+      document.getElementById('instructions').innerHTML = INSTRUCTIONS.simple;
+      startTrial();
+    }
+
+    function nextBlock() {
+      const currentIndex = BLOCKS.findIndex(b => b.name === currentBlock);
+      const nextBlockObj = BLOCKS[currentIndex + 1];
+      
+      if (!nextBlockObj) {
+        showResults();
+        return;
+      }
+
+      currentBlock = nextBlockObj.name;
+      blockTrialsRemaining = nextBlockObj.trials;
+      isPractice = nextBlockObj.training;
+      
+      document.getElementById('instructions').innerHTML = INSTRUCTIONS[nextBlockObj.type];
+      startTrial();
+    }
+
+    // Results (same)
     function showResults() {
       document.getElementById('controls').style.display = 'none';
       document.getElementById('results').style.display = 'block';
@@ -352,29 +370,26 @@
         t.training === 0 && t.num_choices === 4 && t.status === 1
       );
 
-      const simpleRT = realCorrectSimple.length > 0 
-        ? realCorrectSimple.reduce((sum, t) => sum + t.rt, 0) / realCorrectSimple.length 
-        : 0;
-      const choiceRT = realCorrectChoice.length > 0 
-        ? realCorrectChoice.reduce((sum, t) => sum + t.rt, 0) / realCorrectChoice.length 
-        : 0;
+      const simpleRT = realCorrectSimple.length ? 
+        realCorrectSimple.reduce((sum, t) => sum + t.rt, 0) / realCorrectSimple.length : 0;
+      const choiceRT = realCorrectChoice.length ? 
+        realCorrectChoice.reduce((sum, t) => sum + t.rt, 0) / realCorrectChoice.length : 0;
 
       document.getElementById('summary').innerHTML = `
-        <p><strong>Participant ID:</strong> ${participantID}</p>
-        <p>Your response speed in correct trials (training excluded):</p>
-        <p><strong>Simple task:</strong> ${simpleRT.toFixed(0)} ms  (${realCorrectSimple.length} trials)</p>
-        <p><strong>Choice task:</strong> ${choiceRT.toFixed(0)} ms  (${realCorrectChoice.length} trials)</p>
+        <p><strong>ID:</strong> ${participantID}</p>
+        <p>Correct trials (practice excluded):</p>
+        <p><strong>Simple:</strong> ${simpleRT.toFixed(0)} ms (${realCorrectSimple.length} trials)</p>
+        <p><strong>Choice:</strong> ${choiceRT.toFixed(0)} ms (${realCorrectChoice.length} trials)</p>
       `;
     }
 
     function downloadCSV() {
       const headers = ['participant_id','block','training','num_choices','foreperiod','target_pos','rt','status'];
-      const csvContent = [
-        headers.join(','),
-        ...trials.map(t => headers.map(h => `"${t[h] || ''}"`).join(','))
-      ].join('\n');
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const csv = [headers.join(','), ...trials.map(t => 
+        headers.map(h => `"${t[h]||''}"`).join(',')
+      )].join('\n');
+      
+      const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -392,10 +407,9 @@
       document.getElementById('participant-id').focus();
     }
 
-    document.getElementById('participant-id').addEventListener('keypress', (e) => {
+    document.getElementById('participant-id').addEventListener('keypress', e => {
       if (e.key === 'Enter') startExperiment();
     });
-
     document.getElementById('participant-id').focus();
   </script>
 </body>
