@@ -51,6 +51,7 @@
       font-size: 16px;
       margin: 20px 0;
       line-height: 1.4;
+      min-height: 60px;
     }
     #results {
       background: white;
@@ -76,8 +77,7 @@
     <div id="instructions"></div>
     
     <div id="controls" style="display: none;">
-      <button id="ready-btn" onclick="startRealTrials()" disabled>Ready - Start Real Trials</button>
-      <button id="next-block-btn" onclick="nextBlock()" style="display: none;">Next Block</button>
+      <button id="ready-btn" onclick="proceedFromInstruction()" disabled>I'm Ready - Start</button>
     </div>
 
     <div id="results" style="display: none;">
@@ -102,6 +102,7 @@
     // State
     let participantID = '';
     let currentBlock = '';
+    let currentBlockIndex = -1;
     let trialIndex = 0;
     let blockTrialsRemaining = 0;
     let trials = [];
@@ -111,7 +112,8 @@
     let targetPosition = null;
     let correctPosition = null;
     let foreperiod = 0;
-    let isPractice = false;  // NEW: practice vs real
+    let isPractice = false;
+    let isShowingInstruction = true;  // NEW: track if we're on instruction screen
 
     const CHOICE_POSITIONS = [
       { x: -150, key: 'z', index: 1 },
@@ -127,9 +129,9 @@
     ];
 
     const INSTRUCTIONS = {
-      practice: "PRACTICE TRIALS (5 total)<br>Follow instructions above. These don't count toward your score.",
-      simple: "SIMPLE TASK<br>Press SPACE when cross appears in center box.",
-      choice: "CHOICE TASK<br>Z (1st), X (2nd), COMMA (3rd), PERIOD (4th)"
+      practice_simple: "<strong>PRACTICE TRIALS (5 total)</strong><br><br>Press SPACE when the cross appears in the center box.<br><br>These practice trials do not count toward your score.",
+      simple_real: "<strong>SIMPLE TASK (20 trials)</strong><br><br>Press SPACE when the cross appears in the center box.<br><br>Try to respond as quickly and accurately as possible.",
+      choice_real: "<strong>CHOICE TASK (40 trials)</strong><br><br>Four boxes will appear. A cross will appear in one box.<br><br>Press the correct key:<br>Z (leftmost), X (left-center), COMMA (right-center), PERIOD (rightmost)<br><br>Try to respond as quickly and accurately as possible."
     };
 
     // ==== Drawing ====
@@ -173,17 +175,6 @@
       }
     }
 
-    function drawReadyScreen() {
-      clearCanvas();
-      ctx.fillStyle = 'black';
-      ctx.font = '32px Arial';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('Practice complete!', WIDTH/2, HEIGHT/2 - 50);
-      ctx.font = '24px Arial';
-      ctx.fillText('Ready for real test trials?', WIDTH/2, HEIGHT/2 + 50);
-    }
-
     function drawFeedback(type) {
       clearCanvas();
       ctx.fillStyle = 'black';
@@ -204,7 +195,8 @@
     document.addEventListener('keydown', function(e) {
       if (e.code === 'Space') e.preventDefault();
 
-      if (!waitingForResponse) return;
+      // Don't respond during instruction screens
+      if (isShowingInstruction || !waitingForResponse) return;
 
       let status = 'error';
       let rt = performance.now() - startTime;
@@ -239,17 +231,38 @@
       document.getElementById('participant-section').style.display = 'none';
       document.getElementById('controls').style.display = 'block';
       
-      // Start with practice
-      currentBlock = 'practice_simple';
-      blockTrialsRemaining = 5;
-      isPractice = true;
-      document.getElementById('instructions').innerHTML = INSTRUCTIONS.practice;
+      // Start with practice block 0
+      currentBlockIndex = 0;
+      showBlockInstruction();
+    }
+
+    function showBlockInstruction() {
+      // NEW: Show instruction screen before each block
+      isShowingInstruction = true;
+      trialIndex = 0;
+      document.getElementById('trial-counter').style.display = 'none';
+      
+      const blockObj = BLOCKS[currentBlockIndex];
+      currentBlock = blockObj.name;
+      blockTrialsRemaining = blockObj.trials;
+      isPractice = blockObj.training;
+
+      clearCanvas();
+      document.getElementById('instructions').innerHTML = INSTRUCTIONS[currentBlock];
+      document.getElementById('ready-btn').disabled = false;
+      document.getElementById('ready-btn').textContent = 'I\'m Ready - Start';
+    }
+
+    function proceedFromInstruction() {
+      // NEW: Called when user clicks "I'm Ready" button
+      isShowingInstruction = false;
+      document.getElementById('ready-btn').disabled = true;
       startTrial();
     }
 
     function startTrial() {
       if (trialIndex >= blockTrialsRemaining) {
-        trialComplete();
+        blockComplete();
         return;
       }
 
@@ -312,56 +325,24 @@
       }
     }
 
-    function trialComplete() {
-      trialIndex = 0;
-      document.getElementById('trial-counter').style.display = 'none';
+    function blockComplete() {
+      // NEW: Move to next block with instruction screen
+      currentBlockIndex++;
       
-      if (currentBlock === 'practice_simple') {
-        // Practice done → ask if ready
-        document.getElementById('ready-btn').disabled = false;
-        drawReadyScreen();
-        document.getElementById('instructions').innerHTML = 
-          '<strong>Practice complete!</strong><br>Click "Ready" to start real test.';
-      } else {
-        // Move to next block
-        nextBlock();
-      }
-    }
-
-    function startRealTrials() {
-      document.getElementById('ready-btn').disabled = true;
-      document.getElementById('ready-btn').style.display = 'none';
-      document.getElementById('next-block-btn').style.display = 'inline';
-      
-      // First real block: simple
-      currentBlock = 'simple_real';
-      blockTrialsRemaining = 20;
-      isPractice = false;
-      document.getElementById('instructions').innerHTML = INSTRUCTIONS.simple;
-      startTrial();
-    }
-
-    function nextBlock() {
-      const currentIndex = BLOCKS.findIndex(b => b.name === currentBlock);
-      const nextBlockObj = BLOCKS[currentIndex + 1];
-      
-      if (!nextBlockObj) {
+      if (currentBlockIndex >= BLOCKS.length) {
+        // All blocks done
         showResults();
-        return;
+      } else {
+        // Show instruction for next block
+        showBlockInstruction();
       }
-
-      currentBlock = nextBlockObj.name;
-      blockTrialsRemaining = nextBlockObj.trials;
-      isPractice = nextBlockObj.training;
-      
-      document.getElementById('instructions').innerHTML = INSTRUCTIONS[nextBlockObj.type];
-      startTrial();
     }
 
     // Results (same)
     function showResults() {
       document.getElementById('controls').style.display = 'none';
       document.getElementById('results').style.display = 'block';
+      document.getElementById('trial-counter').style.display = 'none';
 
       const realCorrectSimple = trials.filter(t => 
         t.training === 0 && t.num_choices === 1 && t.status === 1
@@ -401,6 +382,7 @@
     function restartExperiment() {
       trials = [];
       currentBlock = '';
+      currentBlockIndex = -1;
       document.getElementById('results').style.display = 'none';
       document.getElementById('participant-section').style.display = 'block';
       document.getElementById('participant-id').value = participantID;
